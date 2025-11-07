@@ -69,15 +69,6 @@ rt005_portal/
 
 ---
 
-## 👨‍💻 Pengembang
-
-**Nama:** Rzky Pratama  
-**Peran:** Full-Stack Developer  
-**Dosen Pembimbing:** Edi Wahyudi, S.Kom  
-**Universitas:** Universitas Teknokrat Indonesia
-
----
-
 ## 📜 Lisensi
 Proyek ini dibuat untuk keperluan akademik dan pengembangan masyarakat.  
 Dilarang memperjualbelikan kode tanpa izin pengembang asli.
