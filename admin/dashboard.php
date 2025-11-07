@@ -102,16 +102,14 @@
       <span>Portal RT 005</span>
       <span class="brand-pill"><i class="bi bi-shield-lock"></i> Admin</span>
     </a>
-    <div class="small text-secondary mb-2">Menu</div>
     <nav class="nav-aside d-grid gap-1">
       <a class="active" href="dashboard.php"><i class="bi bi-speedometer2"></i> <span>Dashboard</span></a>
       <a href="manage_users.php"><i class="bi bi-people"></i> <span>Kelola Warga</span></a>
       <a href="manage_complaints.php"><i class="bi bi-exclamation-octagon"></i> <span>Kelola Pengaduan</span></a>
       <a href="manage_letters.php"><i class="bi bi-file-earmark-text"></i> <span>Kelola Surat</span></a>
       <a href="manage_forum.php"><i class="bi bi-chat-dots"></i> <span>Kelola Forum</span></a>
-    </nav>
-    <hr class="border-secondary-subtle my-3">
-    <a class="nav-aside" href="logout.php"><i class="bi bi-box-arrow-right"></i> <span>Logout</span></a>
+      <hr class="border-secondary-subtle my-3">
+      <a href="logout.php"><i class="bi bi-box-arrow-right"></i> Logout</a>
   </aside>
 
   <!-- MAIN -->

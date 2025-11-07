@@ -7,3 +7,7 @@ define('DB_USER', 'root');
 define('DB_PASS', ''); // kosong untuk XAMPP default
 define('BASE_URL', '/rt005_portal'); // sesuaikan jika pakai subfolder
 session_start();
+
+if (!defined('ADMIN_USER_ID_FALLBACK')) {
+    define('ADMIN_USER_ID_FALLBACK', 1);
+  }
