@@ -14,6 +14,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
   if ($name==='' || $nik==='' || $email==='' || $pass==='') {
     $err = 'Semua field bertanda * wajib diisi.';
+  } elseif (strlen($nik) !== 16) {
+    $err = 'NIK harus 16 digit.';
   } elseif ($pass !== $pass2) {
     $err = 'Konfirmasi password tidak cocok.';
   } elseif ($rt !== 5) {
@@ -124,10 +126,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <label class="form-label">NIK *</label>
             <div class="input-ico">
               <i class="bi bi-credit-card-2-front"></i>
-              <input class="form-control" name="nik" inputmode="numeric" pattern="\d{8,20}" maxlength="20" placeholder="Hanya angka"
+              <input class="form-control" name="nik" inputmode="numeric" pattern="\d{16}" minlength="16" maxlength="16" placeholder="Hanya angka"
                      value="<?= htmlspecialchars($_POST['nik'] ?? '') ?>" required>
             </div>
-            <div class="form-text">Minimal 8 digit, hanya angka.</div>
+            <div class="form-text">Wajib 16 digit, hanya angka.</div>
           </div>
 
           <div class="col-12 col-md-6">
@@ -243,7 +245,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     });
 
     const nik = document.querySelector('input[name="nik"]');
-    if (nik) nik.addEventListener('input', ()=>{ nik.value = nik.value.replace(/\D+/g,'').slice(0,20); });
+    if (nik) nik.addEventListener('input', ()=>{ nik.value = nik.value.replace(/\D+/g,'').slice(0,16); });
     const rt = document.querySelector('input[name="rt"]');
     if (rt) rt.addEventListener('input', ()=>{ rt.value = rt.value.replace(/\D+/g,'').slice(0,3); });
     const rw = document.querySelector('input[name="rw"]');

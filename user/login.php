@@ -2,12 +2,15 @@
 require_once __DIR__ . '/../db.php'; // config.php sudah start session
 
 $err = '';
+$nik = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $nik = trim($_POST['nik'] ?? '');
+    $nik = preg_replace('/\D+/', '', $_POST['nik'] ?? '');
     $password = $_POST['password'] ?? '';
 
     if ($nik === '' || $password === '') {
         $err = "NIK dan password wajib diisi.";
+    } elseif (strlen($nik) !== 16) {
+        $err = "NIK harus 16 digit.";
     } else {
         $pdo = pdo();
         $stmt = $pdo->prepare("SELECT * FROM users WHERE nik = ? AND status = 'active' LIMIT 1");
@@ -98,8 +101,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="input-group">
               <span class="input-group-text bg-light border-end-0"><i class="bi bi-person-vcard"></i></span>
               <input class="form-control border-start-0" name="nik" inputmode="numeric" autocomplete="username"
-                     placeholder="Masukkan NIK (16 digit)" value="<?= htmlspecialchars($_POST['nik'] ?? '') ?>" required>
-              <div class="invalid-feedback">NIK wajib diisi.</div>
+                     pattern="\d{16}" minlength="16" maxlength="16" placeholder="Masukkan NIK (16 digit)"
+                     value="<?= htmlspecialchars($nik) ?>" required>
+              <div class="invalid-feedback">NIK harus 16 digit.</div>
             </div>
           </div>
 
@@ -162,6 +166,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }, false);
       });
     })();
+  </script>
+  <script>
+    const nikInput = document.querySelector('input[name="nik"]');
+    if (nikInput) {
+      nikInput.addEventListener('input', () => {
+        nikInput.value = nikInput.value.replace(/\D+/g, '').slice(0, 16);
+      });
+    }
   </script>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
