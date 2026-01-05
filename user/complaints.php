@@ -23,6 +23,7 @@ $list = $pdo->prepare("SELECT id,title,status,created_at FROM complaints WHERE u
 $list->execute([$uid]);
 $list = $list->fetchAll();
 
+
 // helper status → badge class
 function status_class($s) {
   return $s === 'resolved' ? 'badge-ok'
@@ -194,7 +195,10 @@ function status_class($s) {
 
             <div class="d-flex gap-2">
               <button class="btn btn-brand"><i class="bi bi-send me-1"></i> Kirim</button>
-              <a class="btn btn-outline-secondary" href="<?= url('/user/dashboard.php') ?>">Batal</a>
+    <a class="btn btn-outline-secondary" href="<?= url('/user/dashboard.php') ?>">Batal</a>
+    <a class="btn btn-outline-primary" href="<?= url('/user/complaints_all.php') ?>">
+      <i class="bi bi-people me-1"></i> Lihat Pengaduan Warga
+    </a>
             </div>
           </form>
         </div>
@@ -227,7 +231,11 @@ function status_class($s) {
                 <?php foreach($list as $r): ?>
                   <tr>
                     <td><?= htmlspecialchars($r['created_at']) ?></td>
-                    <td class="text-truncate" style="max-width:460px"><?= htmlspecialchars($r['title']) ?></td>
+                    <td class="text-truncate" style="max-width:460px">
+                      <a class="text-decoration-none" href="<?= url('/user/complaint_detail.php?id='.(int)$r['id']) ?>">
+                        <?= htmlspecialchars($r['title']) ?>
+                      </a>
+                    </td>
                     <td>
                       <?php $cls = status_class($r['status']); ?>
                       <span class="badge <?= $cls ?> text-uppercase" style="font-size:.78rem;letter-spacing:.3px">
