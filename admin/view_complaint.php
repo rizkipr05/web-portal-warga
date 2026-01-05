@@ -3,6 +3,22 @@
 require_once __DIR__ . '/auth.php';
 $pdo = pdo();
 
+function ensure_complaint_messages_table(PDO $pdo) {
+  $pdo->exec(
+    "CREATE TABLE IF NOT EXISTS complaint_messages (
+      id INT NOT NULL AUTO_INCREMENT,
+      complaint_id INT NOT NULL,
+      sender_role VARCHAR(20) NOT NULL,
+      sender_id INT NOT NULL,
+      sender_name VARCHAR(100) NOT NULL,
+      message_text TEXT NOT NULL,
+      created_at DATETIME NOT NULL,
+      PRIMARY KEY (id),
+      INDEX (complaint_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+  );
+}
+
 // --- Ambil ID ---
 $id = (int)($_GET['id'] ?? 0);
 if ($id <= 0) {
@@ -17,6 +33,53 @@ function flash_take($key){
   $v = $_SESSION[$key];
   unset($_SESSION[$key]);
   return $v;
+}
+
+ensure_complaint_messages_table($pdo);
+
+// migrasi tanggapan lama (jika ada) ke chat
+$table = $pdo->query("SHOW TABLES LIKE 'complaint_responses'")->fetch();
+if ($table) {
+  $st = $pdo->prepare(
+    "SELECT response_text, responded_by, responded_at
+     FROM complaint_responses WHERE complaint_id=? LIMIT 1"
+  );
+  $st->execute([$id]);
+  $legacy = $st->fetch();
+  if ($legacy) {
+    $st = $pdo->prepare("SELECT id FROM complaint_messages WHERE complaint_id=? LIMIT 1");
+    $st->execute([$id]);
+    $exists = $st->fetch();
+    if (!$exists) {
+      $st = $pdo->prepare(
+        "INSERT INTO complaint_messages
+         (complaint_id, sender_role, sender_id, sender_name, message_text, created_at)
+         VALUES (?, 'admin', 0, ?, ?, ?)"
+      );
+      $created_at = $legacy['responded_at'] ?: date('Y-m-d H:i:s');
+      $st->execute([$id, $legacy['responded_by'], $legacy['response_text'], $created_at]);
+    }
+  }
+}
+
+// --- Aksi kirim pesan ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_message'])) {
+  $message = trim($_POST['message_text'] ?? '');
+  $sender = $_SESSION['admin_name'] ?? $_SESSION['admin_username'] ?? 'Admin';
+  $sender_id = (int)($_SESSION['admin_id'] ?? 0);
+  if ($message === '') {
+    $_SESSION['flash_err'] = 'Pesan tidak boleh kosong.';
+  } else {
+    $st = $pdo->prepare(
+      "INSERT INTO complaint_messages
+       (complaint_id, sender_role, sender_id, sender_name, message_text, created_at)
+       VALUES (?, 'admin', ?, ?, ?, NOW())"
+    );
+    $st->execute([$id, $sender_id, $sender, $message]);
+    $_SESSION['flash_info'] = "Pesan dikirim ke warga.";
+  }
+  header('Location: view_complaint.php?id='.(int)$id);
+  exit;
 }
 
 // --- Aksi ubah status ---
@@ -44,6 +107,15 @@ if (!$row) {
   header('Location: manage_complaints.php');
   exit;
 }
+
+$st = $pdo->prepare(
+  "SELECT sender_role, sender_name, message_text, created_at
+   FROM complaint_messages
+   WHERE complaint_id=?
+   ORDER BY created_at ASC, id ASC"
+);
+$st->execute([$id]);
+$messages = $st->fetchAll();
 
 $info = flash_take('flash_info');
 $err  = flash_take('flash_err');
@@ -96,6 +168,12 @@ function badge_class($s){
     .panel-body{ padding:18px }
 
     .toast-container{ position:fixed; top:20px; right:20px; z-index:1080 }
+
+    .chat{ display:flex; flex-direction:column; gap:12px }
+    .msg{ max-width:72%; padding:10px 12px; border-radius:14px; border:1px solid #e8eef8; background:#fff }
+    .msg-admin{ align-self:flex-end; background:#eef2ff; border-color:#dbe4ff }
+    .msg-user{ align-self:flex-start; background:#f8fafc }
+    .msg-meta{ font-size:.78rem; color:#64748b; margin-top:6px }
 
     @media(max-width:992px){
       .layout{ grid-template-columns:1fr }
@@ -195,6 +273,45 @@ function badge_class($s){
               </div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <div class="panel mb-3">
+        <div class="panel-head d-flex align-items-center justify-content-between">
+          <div class="h6 m-0 fw-bold d-flex align-items-center gap-2">
+            <span class="badge text-bg-primary rounded-pill"><i class="bi bi-chat-square-text"></i></span>
+            Chat RT ↔ Warga
+          </div>
+        </div>
+        <div class="panel-body">
+          <?php if (!$messages): ?>
+            <div class="alert alert-info m-0">
+              <i class="bi bi-info-circle me-2"></i>Belum ada pesan. Mulai chat dengan warga.
+            </div>
+          <?php else: ?>
+            <div class="chat">
+              <?php foreach ($messages as $m): ?>
+                <?php $is_admin = ($m['sender_role'] === 'admin'); ?>
+                <div class="msg <?= $is_admin ? 'msg-admin' : 'msg-user' ?>">
+                  <div><?= nl2br(htmlspecialchars($m['message_text'])) ?></div>
+                  <div class="msg-meta">
+                    <?= htmlspecialchars($m['sender_name']) ?> • <?= htmlspecialchars($m['created_at']) ?>
+                  </div>
+                </div>
+              <?php endforeach; ?>
+            </div>
+          <?php endif; ?>
+
+          <form method="post" class="mt-3">
+            <label class="form-label fw-semibold">Tulis Pesan</label>
+            <textarea class="form-control" name="message_text" rows="3"
+                      placeholder="Tulis tanggapan atau arahan untuk warga..."></textarea>
+            <div class="d-flex justify-content-end mt-2">
+              <button class="btn btn-primary" name="send_message">
+                <i class="bi bi-send me-1"></i>Kirim Pesan
+              </button>
+            </div>
+          </form>
         </div>
       </div>
 
