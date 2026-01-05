@@ -3,29 +3,80 @@ require_once __DIR__ . '/auth.php';
 $pdo = pdo(); 
 $uid = (int)$warga['id'];
 
+function ensure_letter_attachments_table(PDO $pdo) {
+  $pdo->exec(
+    "CREATE TABLE IF NOT EXISTS letter_attachments (
+      id INT NOT NULL AUTO_INCREMENT,
+      letter_id INT NOT NULL,
+      label VARCHAR(20) NOT NULL,
+      file_path VARCHAR(255) NOT NULL,
+      created_at DATETIME NOT NULL,
+      PRIMARY KEY (id),
+      INDEX (letter_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+  );
+}
+
+function ensure_letter_notifications_table(PDO $pdo) {
+  $pdo->exec(
+    "CREATE TABLE IF NOT EXISTS letter_notifications (
+      id INT NOT NULL AUTO_INCREMENT,
+      letter_id INT NOT NULL,
+      message TEXT NOT NULL,
+      created_at DATETIME NOT NULL,
+      created_by VARCHAR(100) NOT NULL,
+      PRIMARY KEY (id),
+      INDEX (letter_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+  );
+}
+
+ensure_letter_attachments_table($pdo);
+ensure_letter_notifications_table($pdo);
+
 $err = $ok = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   $type    = $_POST['type']    ?? 'surat_pengantar';
   $subject = trim($_POST['subject'] ?? '');
   $details = trim($_POST['details'] ?? '');
   $file_path = null;
+  $attachments = [];
 
-  // Upload lampiran (opsional)
-  if (!empty($_FILES['attachment']['name'])) {
-    $allowed = ['pdf','jpg','jpeg','png'];
-    $ext = strtolower(pathinfo($_FILES['attachment']['name'], PATHINFO_EXTENSION));
+  $allowed = ['pdf','jpg','jpeg','png'];
+  $upload_one = function($file, $label) use ($uid, $allowed, &$err) {
+    if ($err) return null;
+    if (empty($file['name'])) return null;
+    $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
     if (!in_array($ext, $allowed, true)) {
       $err = 'Lampiran harus bertipe PDF/JPG/PNG.';
-    } elseif ($_FILES['attachment']['error'] === UPLOAD_ERR_OK) {
-      $name = 'L_'.$uid.'_'.time().'.'.$ext;
+      return null;
+    }
+    if ($file['error'] === UPLOAD_ERR_OK) {
+      $name = 'L_'.$uid.'_'.time().'_'.$label.'.'.$ext;
       $dest = __DIR__.'/../uploads/'.$name;
-      if (move_uploaded_file($_FILES['attachment']['tmp_name'], $dest)) {
-        $file_path = 'uploads/'.$name;
-      } else {
-        $err = 'Gagal menyimpan file.';
+      if (move_uploaded_file($file['tmp_name'], $dest)) {
+        return 'uploads/'.$name;
       }
-    } else {
-      $err = 'Upload gagal.';
+      $err = 'Gagal menyimpan file.';
+      return null;
+    }
+    $err = 'Upload gagal.';
+    return null;
+  };
+
+  if ($type === 'surat_domisili') {
+    $kk  = $upload_one($_FILES['kk_file'] ?? [], 'kk');
+    $ktp = $upload_one($_FILES['ktp_file'] ?? [], 'ktp');
+    if (!$err && (!$kk || !$ktp)) {
+      $err = 'KTP dan KK wajib diunggah untuk surat domisili.';
+    }
+    if ($kk)  $attachments[] = ['label' => 'kk', 'path' => $kk];
+    if ($ktp) $attachments[] = ['label' => 'ktp', 'path' => $ktp];
+  } else {
+    $lampiran = $upload_one($_FILES['attachment'] ?? [], 'lampiran');
+    if ($lampiran) {
+      $file_path = $lampiran;
+      $attachments[] = ['label' => 'lampiran', 'path' => $lampiran];
     }
   }
 
@@ -34,6 +85,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   if (!$err) {
     $pdo->prepare("INSERT INTO letters(user_id,type,subject,details,file_path) VALUES (?,?,?,?,?)")
         ->execute([$uid,$type,$subject,$details,$file_path]);
+    $letter_id = (int)$pdo->lastInsertId();
+    if ($letter_id && $attachments) {
+      $st = $pdo->prepare(
+        "INSERT INTO letter_attachments (letter_id,label,file_path,created_at)
+         VALUES (?,?,?,NOW())"
+      );
+      foreach ($attachments as $a) {
+        $st->execute([$letter_id, $a['label'], $a['path']]);
+      }
+    }
     $ok = 'Pengajuan surat terkirim.';
     $_POST = [];
   }
@@ -42,6 +103,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $list = $pdo->prepare("SELECT id,type,subject,status,created_at,file_path FROM letters WHERE user_id=? ORDER BY created_at DESC");
 $list->execute([$uid]);
 $list = $list->fetchAll();
+
+$attachments_by_letter = [];
+if ($list) {
+  $ids = array_map(fn($r) => (int)$r['id'], $list);
+  $in  = implode(',', array_fill(0, count($ids), '?'));
+  $st = $pdo->prepare("SELECT letter_id,label,file_path FROM letter_attachments WHERE letter_id IN ($in)");
+  $st->execute($ids);
+  foreach ($st->fetchAll() as $a) {
+    $attachments_by_letter[(int)$a['letter_id']][] = $a;
+  }
+}
+
+$notif_by_letter = [];
+if ($list) {
+  $ids = array_map(fn($r) => (int)$r['id'], $list);
+  $in  = implode(',', array_fill(0, count($ids), '?'));
+  $st = $pdo->prepare(
+    "SELECT ln.letter_id, ln.message
+     FROM letter_notifications ln
+     WHERE ln.letter_id IN ($in)
+     ORDER BY ln.created_at DESC"
+  );
+  $st->execute($ids);
+  foreach ($st->fetchAll() as $n) {
+    if (!isset($notif_by_letter[(int)$n['letter_id']])) {
+      $notif_by_letter[(int)$n['letter_id']] = $n['message'];
+    }
+  }
+}
 ?>
 <!doctype html>
 <html lang="id">
@@ -178,12 +268,19 @@ $list = $list->fetchAll();
               <label class="form-label">Jenis Surat</label>
               <div class="input-ico">
                 <i class="bi bi-ui-checks-grid"></i>
-                <select class="form-select" name="type">
+                <select class="form-select" name="type" id="letterType">
                   <option value="surat_pengantar" <?= (($_POST['type']??'')==='surat_pengantar'?'selected':'') ?>>Surat Pengantar</option>
                   <option value="surat_domisili"  <?= (($_POST['type']??'')==='surat_domisili' ?'selected':'') ?>>Surat Keterangan Domisili</option>
                   <option value="surat_usaha"     <?= (($_POST['type']??'')==='surat_usaha'    ?'selected':'') ?>>Surat Keterangan Usaha</option>
                   <option value="lainnya"         <?= (($_POST['type']??'')==='lainnya'        ?'selected':'') ?>>Lainnya</option>
                 </select>
+              </div>
+            </div>
+
+            <div class="mb-3" id="reqBox">
+              <label class="form-label">Syarat</label>
+              <div class="p-3 rounded border bg-light-subtle">
+                <ul class="m-0 ps-3" id="reqList"></ul>
               </div>
             </div>
 
@@ -203,13 +300,26 @@ $list = $list->fetchAll();
               </div>
             </div>
 
-            <div class="mb-3">
+            <div class="mb-3" id="attSingle">
               <label class="form-label">Lampiran (PDF/JPG/PNG)</label>
               <div class="input-ico">
                 <i class="bi bi-paperclip"></i>
                 <input class="form-control" type="file" name="attachment" accept=".pdf,.jpg,.jpeg,.png" id="att">
               </div>
               <div id="attName" class="form-text"></div>
+            </div>
+
+            <div class="mb-3 d-none" id="attDomisili">
+              <label class="form-label">Lampiran KTP (PDF/JPG/PNG)</label>
+              <div class="input-ico mb-2">
+                <i class="bi bi-person-vcard"></i>
+                <input class="form-control" type="file" name="ktp_file" accept=".pdf,.jpg,.jpeg,.png" id="ktpFile">
+              </div>
+              <label class="form-label">Lampiran KK (PDF/JPG/PNG)</label>
+              <div class="input-ico">
+                <i class="bi bi-people"></i>
+                <input class="form-control" type="file" name="kk_file" accept=".pdf,.jpg,.jpeg,.png" id="kkFile">
+              </div>
             </div>
 
             <div class="d-flex gap-2">
@@ -240,6 +350,7 @@ $list = $list->fetchAll();
                     <th>Jenis</th>
                     <th>Perihal</th>
                     <th>Status</th>
+                    <th>Pesan RT</th>
                     <th>Lampiran</th>
                   </tr>
                 </thead>
@@ -247,20 +358,27 @@ $list = $list->fetchAll();
                 <?php foreach($list as $r): 
                   $s = $r['status'] ?: 'submitted';
                   $cls = ($s==='approved' ? 'success' : ($s==='review' ? 'warning' : ($s==='rejected' ? 'danger' : 'secondary')));
+                  $atts = $attachments_by_letter[(int)$r['id']] ?? [];
+                  $notif = $notif_by_letter[(int)$r['id']] ?? '';
                 ?>
                   <tr>
                     <td><?= htmlspecialchars($r['created_at']) ?></td>
                     <td><?= htmlspecialchars($r['type']) ?></td>
                     <td class="text-truncate" style="max-width:320px"><?= htmlspecialchars($r['subject']) ?></td>
                     <td><span class="badge text-bg-<?= $cls ?>"><?= htmlspecialchars($s) ?></span></td>
+                    <td class="text-truncate" style="max-width:260px"><?= htmlspecialchars($notif ?: '-') ?></td>
                     <td>
-                      <?php if(!empty($r['file_path'])): ?>
+                      <?php if($atts): ?>
+                        <?php foreach($atts as $a): ?>
+                          <a class="btn btn-sm btn-outline-primary me-1 mb-1" target="_blank" href="<?= url('/'.$a['file_path']) ?>">
+                            <i class="bi bi-paperclip me-1"></i><?= htmlspecialchars(strtoupper($a['label'])) ?>
+                          </a>
+                        <?php endforeach; ?>
+                      <?php elseif(!empty($r['file_path'])): ?>
                         <a class="btn btn-sm btn-outline-primary" target="_blank" href="<?= url('/'.$r['file_path']) ?>">
                           <i class="bi bi-paperclip me-1"></i>Lihat
                         </a>
-                      <?php else: ?>
-                        -
-                      <?php endif; ?>
+                      <?php else: ?>-<?php endif; ?>
                     </td>
                   </tr>
                 <?php endforeach;?>
@@ -315,6 +433,35 @@ $list = $list->fetchAll();
       att.addEventListener('change', function(){
         nameBox.textContent = att.files?.[0]?.name ? ('File: ' + att.files[0].name) : '';
       });
+    }
+
+    var typeSel = document.getElementById('letterType');
+    var reqList = document.getElementById('reqList');
+    var attSingle = document.getElementById('attSingle');
+    var attDomisili = document.getElementById('attDomisili');
+    var ktpFile = document.getElementById('ktpFile');
+    var kkFile = document.getElementById('kkFile');
+    var reqs = {
+      surat_pengantar: ['KTP (jika diminta)', 'Tujuan pembuatan surat'],
+      surat_domisili: ['KTP', 'KK', 'Alamat lengkap domisili'],
+      surat_usaha: ['KTP', 'Foto usaha (opsional)', 'Alamat usaha'],
+      lainnya: ['Jelaskan kebutuhan surat pada kolom perihal']
+    };
+    function renderReq() {
+      var val = typeSel ? typeSel.value : 'surat_pengantar';
+      var items = reqs[val] || [];
+      if (reqList) {
+        reqList.innerHTML = items.map(function(t){ return '<li>'+t+'</li>'; }).join('');
+      }
+      var isDom = val === 'surat_domisili';
+      if (attSingle) attSingle.classList.toggle('d-none', isDom);
+      if (attDomisili) attDomisili.classList.toggle('d-none', !isDom);
+      if (ktpFile) ktpFile.required = isDom;
+      if (kkFile) kkFile.required = isDom;
+    }
+    if (typeSel) {
+      typeSel.addEventListener('change', renderReq);
+      renderReq();
     }
   });
 </script>

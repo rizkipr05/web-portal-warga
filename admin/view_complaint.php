@@ -82,6 +82,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_message'])) {
   exit;
 }
 
+// --- Aksi hapus pesan ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_message'])) {
+  $mid = (int)($_POST['message_id'] ?? 0);
+  if ($mid > 0) {
+    $pdo->prepare("DELETE FROM complaint_messages WHERE id=? AND complaint_id=?")->execute([$mid, $id]);
+    $_SESSION['flash_info'] = 'Pesan dihapus.';
+  }
+  header('Location: view_complaint.php?id='.(int)$id);
+  exit;
+}
+
 // --- Aksi ubah status ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['set_status'])) {
   $status = $_POST['status'] ?? 'open';
@@ -109,7 +120,7 @@ if (!$row) {
 }
 
 $st = $pdo->prepare(
-  "SELECT sender_role, sender_name, message_text, created_at
+  "SELECT id, sender_role, sender_name, message_text, created_at
    FROM complaint_messages
    WHERE complaint_id=?
    ORDER BY created_at ASC, id ASC"
@@ -170,10 +181,11 @@ function badge_class($s){
     .toast-container{ position:fixed; top:20px; right:20px; z-index:1080 }
 
     .chat{ display:flex; flex-direction:column; gap:12px }
-    .msg{ max-width:72%; padding:10px 12px; border-radius:14px; border:1px solid #e8eef8; background:#fff }
+    .msg{ max-width:72%; padding:10px 46px 10px 12px; border-radius:14px; border:1px solid #e8eef8; background:#fff; position:relative }
     .msg-admin{ align-self:flex-end; background:#eef2ff; border-color:#dbe4ff }
     .msg-user{ align-self:flex-start; background:#f8fafc }
     .msg-meta{ font-size:.78rem; color:#64748b; margin-top:6px }
+    .msg-actions{ position:absolute; top:6px; right:12px }
 
     @media(max-width:992px){
       .layout{ grid-template-columns:1fr }
@@ -293,6 +305,14 @@ function badge_class($s){
               <?php foreach ($messages as $m): ?>
                 <?php $is_admin = ($m['sender_role'] === 'admin'); ?>
                 <div class="msg <?= $is_admin ? 'msg-admin' : 'msg-user' ?>">
+                  <div class="msg-actions">
+                    <form method="post" onsubmit="return confirm('Hapus pesan ini?');">
+                      <input type="hidden" name="message_id" value="<?= (int)$m['id'] ?>">
+                      <button name="delete_message" class="btn btn-sm btn-outline-dark p-0 px-1">
+                        <i class="bi bi-trash"></i>
+                      </button>
+                    </form>
+                  </div>
                   <div><?= nl2br(htmlspecialchars($m['message_text'])) ?></div>
                   <div class="msg-meta">
                     <?= htmlspecialchars($m['sender_name']) ?> • <?= htmlspecialchars($m['created_at']) ?>

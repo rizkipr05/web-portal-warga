@@ -3,13 +3,76 @@
 $pdo = pdo();
 $info = $err = '';
 
+function ensure_letter_attachments_table(PDO $pdo) {
+  $pdo->exec(
+    "CREATE TABLE IF NOT EXISTS letter_attachments (
+      id INT NOT NULL AUTO_INCREMENT,
+      letter_id INT NOT NULL,
+      label VARCHAR(20) NOT NULL,
+      file_path VARCHAR(255) NOT NULL,
+      created_at DATETIME NOT NULL,
+      PRIMARY KEY (id),
+      INDEX (letter_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+  );
+}
+
+function ensure_letter_notifications_table(PDO $pdo) {
+  $pdo->exec(
+    "CREATE TABLE IF NOT EXISTS letter_notifications (
+      id INT NOT NULL AUTO_INCREMENT,
+      letter_id INT NOT NULL,
+      message TEXT NOT NULL,
+      created_at DATETIME NOT NULL,
+      created_by VARCHAR(100) NOT NULL,
+      PRIMARY KEY (id),
+      INDEX (letter_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+  );
+}
+
+ensure_letter_attachments_table($pdo);
+ensure_letter_notifications_table($pdo);
+
 /* ===== Actions ===== */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_letter'])) {
+  $id = (int)$_POST['id'];
+  try {
+    $pdo->beginTransaction();
+    $pdo->prepare("DELETE FROM letter_attachments WHERE letter_id=?")->execute([$id]);
+    $pdo->prepare("DELETE FROM letter_notifications WHERE letter_id=?")->execute([$id]);
+    $pdo->prepare("DELETE FROM letters WHERE id=?")->execute([$id]);
+    $pdo->commit();
+    $info = "Pengajuan surat #$id dihapus.";
+  } catch (Throwable $e) {
+    if ($pdo->inTransaction()) $pdo->rollBack();
+    $err = "Gagal menghapus surat: " . $e->getMessage();
+  }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_notification'])) {
+  $nid = (int)$_POST['notification_id'];
+  $pdo->prepare("DELETE FROM letter_notifications WHERE id=?")->execute([$nid]);
+  $info = "Notifikasi surat dihapus.";
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['set_status'])) {
   $id = (int)$_POST['id'];
   $status = $_POST['status'] ?? 'review';
   if (!in_array($status, ['review','approved','rejected','submitted'], true)) $status = 'review';
   $pdo->prepare("UPDATE letters SET status=? WHERE id=?")->execute([$status,$id]);
   $info = "Status surat #$id diubah ke $status.";
+
+  if ($status === 'approved') {
+    $by = $_SESSION['admin_name'] ?? $_SESSION['admin_username'] ?? 'Admin';
+    $msg = trim($_POST['note'] ?? '');
+    if ($msg === '') $msg = 'Silakan ambil surat di rumah RT.';
+    $st = $pdo->prepare(
+      "INSERT INTO letter_notifications (letter_id,message,created_at,created_by)
+       VALUES (?,?,NOW(),?)"
+    );
+    $st->execute([$id, $msg, $by]);
+  }
 }
 
 /* ===== Query + (opsional) filter status ===== */
@@ -34,6 +97,33 @@ $sql .= " ORDER BY l.created_at DESC LIMIT 300";
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $rows = $stmt->fetchAll();
+
+$attachments_by_letter = [];
+if ($rows) {
+  $ids = array_map(fn($r) => (int)$r['id'], $rows);
+  $in  = implode(',', array_fill(0, count($ids), '?'));
+  $st = $pdo->prepare("SELECT letter_id,label,file_path FROM letter_attachments WHERE letter_id IN ($in)");
+  $st->execute($ids);
+  foreach ($st->fetchAll() as $a) {
+    $attachments_by_letter[(int)$a['letter_id']][] = $a;
+  }
+}
+
+$notifications_by_letter = [];
+if ($rows) {
+  $ids = array_map(fn($r) => (int)$r['id'], $rows);
+  $in  = implode(',', array_fill(0, count($ids), '?'));
+  $st = $pdo->prepare(
+    "SELECT id, letter_id, message, created_at
+     FROM letter_notifications
+     WHERE letter_id IN ($in)
+     ORDER BY created_at DESC, id DESC"
+  );
+  $st->execute($ids);
+  foreach ($st->fetchAll() as $n) {
+    $notifications_by_letter[(int)$n['letter_id']][] = $n;
+  }
+}
 ?>
 <!doctype html>
 <html lang="id">
@@ -91,6 +181,12 @@ $rows = $stmt->fetchAll();
     .table > :not(caption) > * > *{ padding:12px 14px }
     .table thead th{ font-weight:700; color:#334155; border-bottom:1px solid #e8eef8 }
     .table tbody td{ border-top:1px solid #eef2f7 }
+    .action-stack{ display:flex; flex-direction:column; gap:10px }
+    .action-row{ display:flex; flex-wrap:wrap; gap:6px }
+    .action-note{ width:220px }
+    .notif-list{ display:flex; flex-direction:column; gap:6px }
+    .notif-item{ display:flex; align-items:center; gap:6px; padding:6px 8px; border:1px dashed #e5e7eb; border-radius:10px; background:#fff }
+    .notif-text{ font-size:.85rem; color:#475569 }
 
     /* Toasts */
     .toast-container{ position:fixed; top:20px; right:20px; z-index:1080 }
@@ -214,26 +310,64 @@ $rows = $stmt->fetchAll();
                   <td><span class="badge badge-<?= htmlspecialchars($r['status'] ?: 'submitted') ?>"><?= htmlspecialchars($r['status'] ?: 'submitted') ?></span></td>
                   <td><?= htmlspecialchars($r['created_at'] ?? '') ?></td>
                   <td>
-                    <?php if(!empty($r['file_path'])): ?>
-                      <a class="btn btn-sm btn-outline-primary" target="_blank" href="../<?= htmlspecialchars($r['file_path']) ?>">
+                    <?php $atts = $attachments_by_letter[(int)$r['id']] ?? []; ?>
+                    <?php $notes = $notifications_by_letter[(int)$r['id']] ?? []; ?>
+                    <?php if($atts): ?>
+                      <div class="action-row mb-1">
+                      <?php foreach($atts as $a): ?>
+                        <a class="btn btn-sm btn-outline-primary" target="_blank" href="../<?= htmlspecialchars($a['file_path']) ?>">
+                          <i class="bi bi-paperclip"></i> <?= htmlspecialchars(strtoupper($a['label'])) ?>
+                        </a>
+                      <?php endforeach; ?>
+                      </div>
+                    <?php elseif(!empty($r['file_path'])): ?>
+                      <a class="btn btn-sm btn-outline-primary mb-1" target="_blank" href="../<?= htmlspecialchars($r['file_path']) ?>">
                         <i class="bi bi-paperclip"></i> Lampiran
                       </a>
                     <?php endif; ?>
-                    <form class="d-inline" method="post">
-                      <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
-                      <input type="hidden" name="status" value="review">
-                      <button name="set_status" class="btn btn-sm btn-outline-secondary"><i class="bi bi-search"></i> Review</button>
-                    </form>
-                    <form class="d-inline" method="post">
-                      <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
-                      <input type="hidden" name="status" value="approved">
-                      <button name="set_status" class="btn btn-sm btn-outline-success"><i class="bi bi-check2-circle"></i> Setujui</button>
-                    </form>
-                    <form class="d-inline" method="post">
-                      <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
-                      <input type="hidden" name="status" value="rejected">
-                      <button name="set_status" class="btn btn-sm btn-outline-danger"><i class="bi bi-x-octagon"></i> Tolak</button>
-                    </form>
+                    <div class="action-stack">
+                      <?php if ($notes): ?>
+                        <div class="notif-list">
+                          <?php foreach ($notes as $n): ?>
+                            <div class="notif-item">
+                              <div class="notif-text text-truncate" style="max-width:220px">
+                                <?= htmlspecialchars($n['message']) ?>
+                              </div>
+                              <form method="post" onsubmit="return confirm('Hapus notifikasi ini?');">
+                                <input type="hidden" name="notification_id" value="<?= (int)$n['id'] ?>">
+                                <button name="delete_notification" class="btn btn-sm btn-outline-dark">
+                                  <i class="bi bi-trash"></i>
+                                </button>
+                              </form>
+                            </div>
+                          <?php endforeach; ?>
+                        </div>
+                      <?php endif; ?>
+                      <div class="action-row">
+                        <form class="d-inline" method="post">
+                          <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
+                          <input type="hidden" name="status" value="review">
+                          <button name="set_status" class="btn btn-sm btn-outline-secondary"><i class="bi bi-search"></i> Review</button>
+                        </form>
+                        <form class="d-inline" method="post">
+                          <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
+                          <input type="hidden" name="status" value="rejected">
+                          <button name="set_status" class="btn btn-sm btn-outline-danger"><i class="bi bi-x-octagon"></i> Tolak</button>
+                        </form>
+                        <form class="d-inline" method="post" onsubmit="return confirm('Hapus pengajuan surat ini?');">
+                          <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
+                          <button name="delete_letter" class="btn btn-sm btn-outline-dark"><i class="bi bi-trash"></i> Hapus</button>
+                        </form>
+                      </div>
+                      <form class="d-inline" method="post">
+                        <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
+                        <input type="hidden" name="status" value="approved">
+                        <div class="action-row">
+                          <input class="form-control form-control-sm action-note" name="note" placeholder="Pesan: surat siap diambil…">
+                          <button name="set_status" class="btn btn-sm btn-outline-success"><i class="bi bi-check2-circle"></i> Setujui</button>
+                        </div>
+                      </form>
+                    </div>
                   </td>
                 </tr>
                 <?php endforeach; if(!$rows): ?>

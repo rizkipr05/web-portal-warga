@@ -4,6 +4,21 @@ $pdo = pdo();
 $info = $err = '';
 
 // === Actions ===
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_complaint'])) {
+  $id = (int)$_POST['id'];
+  try {
+    $pdo->beginTransaction();
+    $pdo->prepare("DELETE FROM complaint_messages WHERE complaint_id=?")->execute([$id]);
+    $pdo->prepare("DELETE FROM complaint_views WHERE complaint_id=?")->execute([$id]);
+    $pdo->prepare("DELETE FROM complaints WHERE id=?")->execute([$id]);
+    $pdo->commit();
+    $info = "Pengaduan #$id dihapus.";
+  } catch (Throwable $e) {
+    if ($pdo->inTransaction()) $pdo->rollBack();
+    $err = "Gagal menghapus pengaduan: " . $e->getMessage();
+  }
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['set_status'])) {
   $id = (int)$_POST['id'];
   $status = $_POST['status'] ?? 'open';
@@ -122,6 +137,7 @@ $rows = $stmt->fetchAll();
     .table > :not(caption) > * > *{ padding:12px 14px }
     .table thead th{ font-weight:700; color:#334155; border-bottom:1px solid #e8eef8 }
     .table tbody td{ border-top:1px solid #eef2f7 }
+    .action-row{ display:flex; flex-wrap:wrap; gap:6px }
 
     /* Toast container (alert modern) */
     .toast-container{ position:fixed; top:20px; right:20px; z-index:1080 }
@@ -254,30 +270,38 @@ $rows = $stmt->fetchAll();
                     <td><span class="badge badge-<?= htmlspecialchars($r['status']) ?>"><?= htmlspecialchars($r['status']) ?></span></td>
                     <td><?= htmlspecialchars($r['created_at'] ?? '') ?></td>
                     <td>
-                      <form class="d-inline" method="post">
-                        <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
-                        <input type="hidden" name="status" value="open">
-                        <button name="set_status" class="btn btn-sm btn-outline-secondary">
-                          <i class="bi bi-bug"></i> Open
-                        </button>
-                      </form>
-                      <form class="d-inline" method="post">
-                        <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
-                        <input type="hidden" name="status" value="in_progress">
-                        <button name="set_status" class="btn btn-sm btn-outline-warning">
-                          <i class="bi bi-hourglass-split"></i> Proses
-                        </button>
-                      </form>
-                      <form class="d-inline" method="post">
-                        <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
-                        <input type="hidden" name="status" value="resolved">
-                        <button name="set_status" class="btn btn-sm btn-outline-success">
-                          <i class="bi bi-check2-circle"></i> Selesai
-                        </button>
-                      </form>
-                      <a class="btn btn-sm btn-outline-primary" href="view_complaint.php?id=<?= (int)$r['id'] ?>">
-                        <i class="bi bi-eye"></i> Lihat
-                      </a>
+                      <div class="action-row">
+                        <form class="d-inline" method="post">
+                          <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
+                          <input type="hidden" name="status" value="open">
+                          <button name="set_status" class="btn btn-sm btn-outline-secondary">
+                            <i class="bi bi-bug"></i> Open
+                          </button>
+                        </form>
+                        <form class="d-inline" method="post">
+                          <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
+                          <input type="hidden" name="status" value="in_progress">
+                          <button name="set_status" class="btn btn-sm btn-outline-warning">
+                            <i class="bi bi-hourglass-split"></i> Proses
+                          </button>
+                        </form>
+                        <form class="d-inline" method="post">
+                          <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
+                          <input type="hidden" name="status" value="resolved">
+                          <button name="set_status" class="btn btn-sm btn-outline-success">
+                            <i class="bi bi-check2-circle"></i> Selesai
+                          </button>
+                        </form>
+                        <a class="btn btn-sm btn-outline-primary" href="view_complaint.php?id=<?= (int)$r['id'] ?>">
+                          <i class="bi bi-eye"></i> Lihat
+                        </a>
+                        <form class="d-inline" method="post" onsubmit="return confirm('Hapus pengaduan ini?');">
+                          <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
+                          <button name="delete_complaint" class="btn btn-sm btn-outline-dark">
+                            <i class="bi bi-trash"></i> Hapus
+                          </button>
+                        </form>
+                      </div>
                     </td>
                   </tr>
                 <?php endforeach; if(!$rows): ?>
